@@ -1,13 +1,13 @@
 package com.melashkov.obdstallanalyzer.data.obd
 
-import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
+import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import java.util.Locale
 
 internal object ObdCsv {
-    fun build(samples: List<ObdSample>, state: StallEventRecorder.State): String {
+    fun build(samples: List<ObdSample>, state: CaptureState): String {
         val csv = StringBuilder()
-        csv.append("capture_state,").append(state.name).append('\n')
+        csv.append("capture_state,").append(state.phase.name).append('\n')
         csv.append("time_ms,time,rpm,ecu_v,adapter_v,tps_pct,relative_tps_pct,accelerator_pct,")
             .append("map_kpa,stft_pct,o2_1_v,o2_1_trim_pct,o2_2_v,o2_2_trim_pct,")
             .append("coolant_c,intake_c,timing_deg,purge_pct,baro_kpa,fuel_status,event\n")

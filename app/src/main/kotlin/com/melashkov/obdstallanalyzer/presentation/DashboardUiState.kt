@@ -1,5 +1,6 @@
 package com.melashkov.obdstallanalyzer.presentation
 
+import com.melashkov.obdstallanalyzer.domain.capture.UpdateCaptureStateUseCase
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
 
@@ -9,7 +10,10 @@ internal data class DashboardUiState(
     val status: String = "Not connected",
     val statusTone: UiTone = UiTone.MUTED,
     val sample: ObdSample? = null,
-    val captureStatus: String = "Waiting for engine start · retains 60 s before and 10 s after",
+    val captureStatus: String =
+        "Waiting for engine start · retains " +
+            "${UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_SECONDS} s before and " +
+            "${UpdateCaptureStateUseCase.POST_EVENT_WINDOW_SECONDS} s after",
     val captureTone: UiTone = UiTone.MUTED,
     val sessionActive: Boolean = false,
     val demoRunning: Boolean = false,

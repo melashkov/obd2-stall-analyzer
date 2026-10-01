@@ -3,11 +3,12 @@ package com.melashkov.obdstallanalyzer.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
 import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
+import com.melashkov.obdstallanalyzer.domain.capture.UpdateCaptureStateUseCase
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import com.melashkov.obdstallanalyzer.domain.report.AiDiagnosticReport
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
-import com.melashkov.obdstallanalyzer.domain.session.CapturePhase
 import com.melashkov.obdstallanalyzer.domain.session.ObdSessionController
 import com.melashkov.obdstallanalyzer.domain.session.ObdSessionState
 import com.melashkov.obdstallanalyzer.domain.session.SessionStatusKind
@@ -33,8 +34,6 @@ internal class StallAnalyzerViewModel : ViewModel() {
     private var controller: ObdSessionController? = null
     private var sessionStateJob: Job? = null
     private var demoJob: Job? = null
-    private var captureUiUntil = 0L
-    private var captureReady = false
 
     fun attachController(controller: ObdSessionController) {
         if (this.controller === controller) return
@@ -130,7 +129,7 @@ internal class StallAnalyzerViewModel : ViewModel() {
         }
         demoJob = viewModelScope.launch {
             val startedAt = System.currentTimeMillis()
-            var stallEmitted = false
+            val recorder = StallEventRecorder()
             while (isActive) {
                 val seconds = (System.currentTimeMillis() - startedAt) / 1000.0f
                 val sample = when {
@@ -142,11 +141,10 @@ internal class StallAnalyzerViewModel : ViewModel() {
                         demoSample(seconds - DEMO_ENGINE_START_SECONDS)
                     else -> demoSample(seconds - DEMO_ENGINE_START_SECONDS).copy(
                         rpm = 0.0f,
-                        event = if (stallEmitted) "" else StallEventRecorder.STALL_EVENT,
                     )
                 }
-                if (sample.event == StallEventRecorder.STALL_EVENT) stallEmitted = true
-                updateSample(sample)
+                val update = recorder.record(sample)
+                updateSample(update.sample, update.captureState)
                 delay(350L)
             }
         }
@@ -182,16 +180,7 @@ internal class StallAnalyzerViewModel : ViewModel() {
 
     private fun applySessionState(session: ObdSessionState) {
         if (mutableUiState.value.demoRunning) return
-        val capture = when (session.capturePhase) {
-            CapturePhase.WAITING ->
-                "Waiting for engine start · retains 60 s before and 10 s after" to UiTone.MUTED
-            CapturePhase.ARMED ->
-                "ARMED · retaining the previous 60 seconds" to UiTone.ACCENT
-            CapturePhase.CAPTURING ->
-                "CAPTURING · ${session.captureSecondsRemaining} s remaining" to UiTone.WARNING
-            CapturePhase.READY ->
-                "CAPTURE READY · share with ChatGPT / AI" to UiTone.ACCENT
-        }
+        val capture = capturePresentation(session.captureState)
         val previous = mutableUiState.value
         mutableUiState.update {
             it.copy(
@@ -218,31 +207,25 @@ internal class StallAnalyzerViewModel : ViewModel() {
         }
     }
 
-    private fun updateSample(sample: ObdSample) {
-        val capture = when {
-            sample.event == StallEventRecorder.STALL_EVENT -> {
-                captureUiUntil = sample.timestampMs + 10_000L
-                captureReady = false
-                "STALL_DETECTED · recording 10 seconds after event" to UiTone.ERROR
-            }
-            captureUiUntil > 0L && sample.timestampMs < captureUiUntil -> {
-                val seconds = (captureUiUntil - sample.timestampMs + 999) / 1000
-                "CAPTURING · $seconds s remaining" to UiTone.WARNING
-            }
-            captureUiUntil > 0L -> {
-                captureUiUntil = 0L
-                captureReady = true
-                "CAPTURE READY · share with ChatGPT / AI" to UiTone.ACCENT
-            }
-            captureReady -> "CAPTURE READY · share with ChatGPT / AI" to UiTone.ACCENT
-            sample.rpm >= 700.0f ->
-                "ARMED · retaining the previous 60 seconds" to UiTone.ACCENT
-            else ->
-                "Waiting for engine start · retains 60 s before and 10 s after" to UiTone.MUTED
-        }
+    private fun updateSample(sample: ObdSample, captureState: CaptureState) {
+        val capture = capturePresentation(captureState)
         mutableUiState.update {
             it.copy(sample = sample, captureStatus = capture.first, captureTone = capture.second)
         }
+    }
+
+    private fun capturePresentation(state: CaptureState) = when (state.phase) {
+        CaptureState.Phase.WAITING ->
+            "Waiting for engine start · retains " +
+                "${UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_SECONDS} s before and " +
+                "${UpdateCaptureStateUseCase.POST_EVENT_WINDOW_SECONDS} s after" to UiTone.MUTED
+        CaptureState.Phase.ARMED ->
+            "ARMED · retaining the previous " +
+                "${UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_SECONDS} seconds" to UiTone.ACCENT
+        CaptureState.Phase.CAPTURING ->
+            "CAPTURING · ${state.secondsRemaining} s remaining" to UiTone.WARNING
+        CaptureState.Phase.READY ->
+            "CAPTURE READY · share with ChatGPT / AI" to UiTone.ACCENT
     }
 
     private fun requestStopRecording(newStatus: String) {
@@ -266,12 +249,11 @@ internal class StallAnalyzerViewModel : ViewModel() {
     }
 
     private fun clearCaptureState() {
-        captureUiUntil = 0L
-        captureReady = false
+        val capture = capturePresentation(CaptureState())
         mutableUiState.update {
             it.copy(
-                captureStatus = "Waiting for engine start · retains 60 s before and 10 s after",
-                captureTone = UiTone.MUTED,
+                captureStatus = capture.first,
+                captureTone = capture.second,
             )
         }
     }

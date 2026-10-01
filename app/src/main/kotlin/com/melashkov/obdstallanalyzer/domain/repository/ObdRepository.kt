@@ -1,5 +1,6 @@
 package com.melashkov.obdstallanalyzer.domain.repository
 
+import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import kotlinx.coroutines.flow.Flow
 
@@ -11,7 +12,10 @@ internal data class ObdDevice(
 internal sealed interface ObdEvent {
     data class Status(val message: String) : ObdEvent
     data class Connected(val deviceName: String) : ObdEvent
-    data class SampleReceived(val sample: ObdSample) : ObdEvent
+    data class SampleReceived(
+        val sample: ObdSample,
+        val captureState: CaptureState,
+    ) : ObdEvent
     data class Failed(val message: String) : ObdEvent
     data object Disconnected : ObdEvent
 }

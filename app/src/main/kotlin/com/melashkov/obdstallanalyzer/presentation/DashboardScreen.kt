@@ -1,5 +1,6 @@
 package com.melashkov.obdstallanalyzer.presentation
 
+import com.melashkov.obdstallanalyzer.domain.capture.UpdateCaptureStateUseCase
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -220,7 +221,7 @@ private fun DashboardContent(
             MetricCard(
                 label = "ENGINE SPEED",
                 value = format(sample?.rpm, "%.0f rpm"),
-                detail = "Recorder arms above 700 rpm",
+                detail = "Recorder arms at ${UpdateCaptureStateUseCase.ARMING_RPM.toInt()} rpm",
                 accent = Teal,
                 modifier = Modifier.weight(1f).fillMaxHeight().heightIn(min = MetricCardMinHeight),
             )
@@ -299,8 +300,11 @@ private fun DashboardContent(
 
         Text(
             "Pair a Bluetooth Classic ELM-compatible adapter first, connect with ignition ON, " +
-                "then start the engine. The analyzer retains only the latest 60 seconds until RPM " +
-                "drops below 300, marks STALL_DETECTED, and records 10 seconds afterward. Review " +
+                "then start the engine. The analyzer retains only the latest " +
+                "${UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_SECONDS} seconds until RPM drops " +
+                "below ${UpdateCaptureStateUseCase.STALL_RPM.toInt()}, marks STALL_DETECTED, " +
+                "and records ${UpdateCaptureStateUseCase.POST_EVENT_WINDOW_SECONDS} seconds " +
+                "afterward. Review " +
                 "the data before explicitly sharing it with an AI. Set up while parked. Do not " +
                 "operate the app while driving; pull over safely or ask a passenger.",
             color = Muted,

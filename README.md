@@ -31,7 +31,7 @@ OBD Stall Analyzer is a read-only Android app for cars and motorcycles with a co
 
 ## How capture works
 
-1. The recorder arms once engine speed reaches **700 RPM**.
+1. The recorder arms once engine speed reaches at least **700 RPM**.
 2. A transition from at least **600 RPM** to below **300 RPM** creates a `STALL_DETECTED` marker.
 3. The app preserves no more than **60 seconds before** the marker and records **10 seconds after** it.
 4. Until a stall occurs, only the latest rolling 60-second window is retained. Only the newest event capture is kept in memory.

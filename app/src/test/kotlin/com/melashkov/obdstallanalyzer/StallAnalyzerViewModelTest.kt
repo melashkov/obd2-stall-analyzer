@@ -1,8 +1,8 @@
 package com.melashkov.obdstallanalyzer
 
+import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
-import com.melashkov.obdstallanalyzer.domain.session.CapturePhase
 import com.melashkov.obdstallanalyzer.domain.session.ObdSessionController
 import com.melashkov.obdstallanalyzer.domain.session.ObdSessionState
 import com.melashkov.obdstallanalyzer.domain.session.SessionStatusKind
@@ -57,7 +57,9 @@ class StallAnalyzerViewModelTest {
             statusKind = SessionStatusKind.CONNECTED,
             sample = sample(rpm = 820f),
             sessionActive = true,
-            capturePhase = CapturePhase.ARMED,
+            captureState = CaptureState(
+                CaptureState.Phase.ARMED,
+            ),
         )
         advanceUntilIdle()
 
@@ -79,7 +81,9 @@ class StallAnalyzerViewModelTest {
             statusKind = SessionStatusKind.CONNECTED,
             sample = sample(rpm = 900f),
             sessionActive = true,
-            capturePhase = CapturePhase.ARMED,
+            captureState = CaptureState(
+                CaptureState.Phase.ARMED,
+            ),
         )
         advanceUntilIdle()
 

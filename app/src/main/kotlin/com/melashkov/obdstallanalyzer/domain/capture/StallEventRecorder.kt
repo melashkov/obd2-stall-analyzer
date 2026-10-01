@@ -4,64 +4,55 @@ import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import java.util.ArrayDeque
 
 internal class StallEventRecorder(
-    private val preEventWindowMs: Long = 60_000L,
-    private val postEventWindowMs: Long = 10_000L,
+    private val preEventWindowMs: Long = UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_MS,
+    postEventWindowMs: Long = UpdateCaptureStateUseCase.POST_EVENT_WINDOW_MS,
 ) {
     data class Update(
         val sample: ObdSample,
         val stallDetected: Boolean,
         val captureCompleted: Boolean,
+        val captureState: CaptureState,
     )
-
-    enum class State {
-        ROLLING,
-        CAPTURING_AFTER_STALL,
-        CAPTURE_READY,
-    }
 
     private val rollingSamples = ArrayDeque<ObdSample>()
     private var activeCapture: MutableList<ObdSample>? = null
     private var latestCapture: List<ObdSample> = emptyList()
-    private var previousRpm = Float.NaN
-    private var engineArmed = false
-    private var stallDetectedAt = 0L
+    private val updateCaptureState = UpdateCaptureStateUseCase(postEventWindowMs)
 
-    var state: State = State.ROLLING
-        private set
+    val captureState: CaptureState get() = updateCaptureState.state
 
     fun record(incoming: ObdSample): Update {
         trimRollingWindow(incoming.timestampMs)
-        val stallDetected = engineArmed && activeCapture == null &&
-            !previousRpm.isNaN() && previousRpm >= 600.0f && incoming.rpm < 300.0f
-        if (incoming.rpm >= 700.0f) engineArmed = true
-
-        val sample = if (stallDetected) incoming.copy(event = STALL_EVENT) else incoming
-        var captureCompleted = false
+        val captureUpdate = updateCaptureState(incoming)
+        val sample = if (captureUpdate.stallDetected) {
+            incoming.copy(event = STALL_EVENT)
+        } else {
+            incoming
+        }
 
         when {
-            stallDetected -> {
-                stallDetectedAt = sample.timestampMs
+            captureUpdate.stallDetected -> {
                 activeCapture = rollingSamples.toMutableList().apply { add(sample) }
                 rollingSamples.clear()
-                engineArmed = false
-                state = State.CAPTURING_AFTER_STALL
             }
 
             activeCapture != null -> {
                 activeCapture!!.add(sample)
-                if (sample.timestampMs - stallDetectedAt >= postEventWindowMs) {
+                if (captureUpdate.captureCompleted) {
                     latestCapture = activeCapture!!.toList()
                     activeCapture = null
-                    captureCompleted = true
-                    state = State.CAPTURE_READY
                 }
             }
 
             else -> rollingSamples.addLast(sample)
         }
 
-        previousRpm = sample.rpm
-        return Update(sample, stallDetected, captureCompleted)
+        return Update(
+            sample = sample,
+            stallDetected = captureUpdate.stallDetected,
+            captureCompleted = captureUpdate.captureCompleted,
+            captureState = captureUpdate.state,
+        )
     }
 
     fun samplesForAnalysis(): List<ObdSample> = when {

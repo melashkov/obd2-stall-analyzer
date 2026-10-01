@@ -3,6 +3,7 @@ package com.melashkov.obdstallanalyzer.data.bluetooth
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import com.melashkov.obdstallanalyzer.data.obd.ObdCsv
+import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
 import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
@@ -23,7 +24,7 @@ internal class BluetoothObdRepository(
     private data class SessionSnapshot(
         val diagnosticLog: String,
         val samples: List<ObdSample>,
-        val recorderState: StallEventRecorder.State,
+        val captureState: CaptureState,
     )
 
     private val activeClient = AtomicReference<ElmBluetoothClient?>()
@@ -31,7 +32,7 @@ internal class BluetoothObdRepository(
         SessionSnapshot(
             diagnosticLog = "No connection has been attempted.",
             samples = emptyList(),
-            recorderState = StallEventRecorder.State.ROLLING,
+            captureState = CaptureState(),
         ),
     )
 
@@ -62,7 +63,7 @@ internal class BluetoothObdRepository(
         val client = ElmBluetoothClient(bluetoothAdapter, device)
         activeClient.getAndSet(client)?.close()
         latestSnapshot.set(
-            SessionSnapshot("", emptyList(), StallEventRecorder.State.ROLLING),
+            SessionSnapshot("", emptyList(), CaptureState()),
         )
 
         fun publishSnapshot() {
@@ -71,7 +72,7 @@ internal class BluetoothObdRepository(
                 SessionSnapshot(
                     diagnosticLog = client.diagnosticLog(),
                     samples = recorder.samplesForAnalysis(),
-                    recorderState = recorder.state,
+                    captureState = recorder.captureState,
                 ),
             )
         }
@@ -88,9 +89,9 @@ internal class BluetoothObdRepository(
                         send(ObdEvent.Connected(deviceName))
                     },
                     onSample = { sample ->
-                        val recorded = recorder.record(sample).sample
+                        val update = recorder.record(sample)
                         publishSnapshot()
-                        send(ObdEvent.SampleReceived(recorded))
+                        send(ObdEvent.SampleReceived(update.sample, update.captureState))
                     },
                 )
             } catch (cancelled: CancellationException) {
@@ -118,7 +119,7 @@ internal class BluetoothObdRepository(
             append(snapshot.diagnosticLog)
             if (snapshot.samples.isNotEmpty()) {
                 append("\n--- Retained sensor data ---\n")
-                append(ObdCsv.build(snapshot.samples, snapshot.recorderState))
+                append(ObdCsv.build(snapshot.samples, snapshot.captureState))
             }
         }
     }
@@ -128,7 +129,7 @@ internal class BluetoothObdRepository(
         return if (snapshot.samples.isEmpty()) {
             ""
         } else {
-            ObdCsv.build(snapshot.samples, snapshot.recorderState)
+            ObdCsv.build(snapshot.samples, snapshot.captureState)
         }
     }
 

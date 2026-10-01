@@ -1,14 +1,26 @@
 package com.melashkov.obdstallanalyzer.domain.report
 
+import com.melashkov.obdstallanalyzer.domain.capture.UpdateCaptureStateUseCase
+
 internal object AiDiagnosticReport {
-    fun build(recorderOutput: String): String = """
+    fun build(recorderOutput: String): String {
+        val stallRule =
+            "Stall rule: recorder armed at ${UpdateCaptureStateUseCase.ARMING_RPM.toInt()} rpm; " +
+                "the previous sample was at least " +
+                "${UpdateCaptureStateUseCase.STALL_PREVIOUS_RPM.toInt()} rpm and the next was " +
+                "below ${UpdateCaptureStateUseCase.STALL_RPM.toInt()} rpm"
+        val captureWindow =
+            "Capture window: up to ${UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_SECONDS} " +
+                "seconds before STALL_DETECTED and " +
+                "${UpdateCaptureStateUseCase.POST_EVENT_WINDOW_SECONDS} seconds after it"
+        return """
         OBD STALL EVENT — AI DIAGNOSTIC REQUEST
 
         Vehicle: add make, model, year, engine and fuel type
         Interface: Bluetooth ELM327-compatible OBD-II adapter
         Collection method: read-only standard OBD-II Mode 01 requests
-        Stall rule: RPM was previously above 700 rpm, then fell below 300 rpm
-        Capture window: up to 60 seconds before STALL_DETECTED and 10 seconds after it
+        $stallRule
+        $captureWindow
 
         Please analyze the data as follows:
         1. Reconstruct the sequence immediately before and after STALL_DETECTED.
@@ -29,4 +41,5 @@ internal object AiDiagnosticReport {
         --- RECORDER OUTPUT ---
         $recorderOutput
     """.trimIndent()
+    }
 }

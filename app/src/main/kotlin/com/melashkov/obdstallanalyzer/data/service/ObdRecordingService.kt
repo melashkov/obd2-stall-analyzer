@@ -14,10 +14,10 @@ import android.os.IBinder
 import com.melashkov.obdstallanalyzer.MainActivity
 import com.melashkov.obdstallanalyzer.R
 import com.melashkov.obdstallanalyzer.data.bluetooth.BluetoothObdRepository
-import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
+import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
+import com.melashkov.obdstallanalyzer.domain.capture.UpdateCaptureStateUseCase
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
 import com.melashkov.obdstallanalyzer.domain.repository.ObdEvent
-import com.melashkov.obdstallanalyzer.domain.session.CapturePhase
 import com.melashkov.obdstallanalyzer.domain.session.ObdSessionController
 import com.melashkov.obdstallanalyzer.domain.session.ObdSessionState
 import com.melashkov.obdstallanalyzer.domain.session.SessionStatusKind
@@ -44,8 +44,6 @@ internal class ObdRecordingService : Service(), ObdSessionController {
 
     private lateinit var repository: BluetoothObdRepository
     private var recordingJob: Job? = null
-    private var captureUntilMs = 0L
-    private var captureReady = false
 
     override val isAvailable: Boolean get() = repository.isAvailable
     override val isEnabled: Boolean get() = repository.isEnabled
@@ -83,8 +81,6 @@ internal class ObdRecordingService : Service(), ObdSessionController {
         val previousJob = recordingJob
         previousJob?.cancel()
         repository.disconnect()
-        captureUntilMs = 0L
-        captureReady = false
         mutableState.value = ObdSessionState(
             status = "Connecting to OBD adapter…",
             statusKind = SessionStatusKind.WORKING,
@@ -111,7 +107,7 @@ internal class ObdRecordingService : Service(), ObdSessionController {
                 }
                 updateNotification(status)
             }
-            is ObdEvent.SampleReceived -> updateSample(event.sample)
+            is ObdEvent.SampleReceived -> updateSample(event.sample, event.captureState)
             is ObdEvent.Failed -> {
                 mutableState.update {
                     it.copy(
@@ -139,47 +135,25 @@ internal class ObdRecordingService : Service(), ObdSessionController {
         }
     }
 
-    private fun updateSample(sample: com.melashkov.obdstallanalyzer.domain.model.ObdSample) {
-        val previousPhase = mutableState.value.capturePhase
-        val phase: CapturePhase
-        var secondsRemaining = 0L
-        when {
-            sample.event == StallEventRecorder.STALL_EVENT -> {
-                captureUntilMs = sample.timestampMs + POST_STALL_CAPTURE_MS
-                captureReady = false
-                phase = CapturePhase.CAPTURING
-                secondsRemaining = 10L
-            }
-            captureUntilMs > 0L && sample.timestampMs < captureUntilMs -> {
-                phase = CapturePhase.CAPTURING
-                secondsRemaining = (captureUntilMs - sample.timestampMs + 999L) / 1_000L
-            }
-            captureUntilMs > 0L -> {
-                captureUntilMs = 0L
-                captureReady = true
-                phase = CapturePhase.READY
-            }
-            captureReady -> phase = CapturePhase.READY
-            sample.rpm >= 700.0f -> phase = CapturePhase.ARMED
-            else -> phase = CapturePhase.WAITING
-        }
+    private fun updateSample(
+        sample: com.melashkov.obdstallanalyzer.domain.model.ObdSample,
+        captureState: CaptureState,
+    ) {
+        val previousCaptureState = mutableState.value.captureState
         mutableState.update {
             it.copy(
                 sample = sample,
                 sessionActive = true,
-                capturePhase = phase,
-                captureSecondsRemaining = secondsRemaining,
+                captureState = captureState,
             )
         }
-        if (phase != previousPhase) updateNotification(notificationText(phase, secondsRemaining))
+        if (captureState != previousCaptureState) updateNotification(notificationText(captureState))
     }
 
     private fun stopRecording(message: String, kind: SessionStatusKind) {
         recordingJob?.cancel()
         recordingJob = null
         repository.disconnect()
-        captureUntilMs = 0L
-        captureReady = false
         mutableState.value = ObdSessionState(status = message, statusKind = kind)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -245,11 +219,14 @@ internal class ObdRecordingService : Service(), ObdSessionController {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private fun notificationText(phase: CapturePhase, secondsRemaining: Long): String = when (phase) {
-        CapturePhase.WAITING -> "Connected · waiting for engine start"
-        CapturePhase.ARMED -> "Armed · retaining the previous 60 seconds"
-        CapturePhase.CAPTURING -> "Stall detected · $secondsRemaining s remaining"
-        CapturePhase.READY -> "Capture ready"
+    private fun notificationText(state: CaptureState): String = when (state.phase) {
+        CaptureState.Phase.WAITING -> "Connected · waiting for engine start"
+        CaptureState.Phase.ARMED ->
+            "Armed · retaining the previous " +
+                "${UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_SECONDS} seconds"
+        CaptureState.Phase.CAPTURING ->
+            "Stall detected · ${state.secondsRemaining} s remaining"
+        CaptureState.Phase.READY -> "Capture ready"
     }
 
     override fun onDestroy() {
@@ -265,6 +242,5 @@ internal class ObdRecordingService : Service(), ObdSessionController {
         const val EXTRA_DEVICE_ID = "device_id"
         private const val CHANNEL_ID = "obd_recording"
         private const val NOTIFICATION_ID = 41
-        private const val POST_STALL_CAPTURE_MS = 10_000L
     }
 }
