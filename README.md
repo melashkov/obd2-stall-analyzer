@@ -51,7 +51,9 @@ Then:
 1. Pair the adapter in Android's Bluetooth settings.
 2. Open OBD Stall Analyzer and tap **Connect adapter**.
 3. Select the paired adapter, switch the ignition on, and start the engine.
-4. Leave the app recording; after a stall, review the retained data.
+4. Leave the app recording; the screen may be turned off while the foreground-service
+   notification remains visible. Use the notification's **Stop recording** action to end it.
+   After a stall, reopen the app and review the retained data.
 5. Tap **Share recording to ChatGPT / AI** to choose an analysis destination.
 
 BLE-only and Wi-Fi-only adapters are not currently supported. Automatic OBD-II protocol selection is enabled.

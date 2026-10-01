@@ -2,13 +2,18 @@ package com.melashkov.obdstallanalyzer
 
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
-import com.melashkov.obdstallanalyzer.domain.repository.ObdEvent
-import com.melashkov.obdstallanalyzer.domain.repository.ObdRepository
+import com.melashkov.obdstallanalyzer.domain.session.CapturePhase
+import com.melashkov.obdstallanalyzer.domain.session.ObdSessionController
+import com.melashkov.obdstallanalyzer.domain.session.ObdSessionState
+import com.melashkov.obdstallanalyzer.domain.session.SessionStatusKind
 import com.melashkov.obdstallanalyzer.presentation.StallAnalyzerViewModel
+import com.melashkov.obdstallanalyzer.presentation.UiEffect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -38,16 +43,22 @@ class StallAnalyzerViewModelTest {
 
     @Test
     fun connectFlowUpdatesScreenState() = runTest(dispatcher) {
-        val repository = FakeObdRepository()
-        val viewModel = StallAnalyzerViewModel(repository)
+        val controller = FakeSessionController()
+        val viewModel = StallAnalyzerViewModel()
+        viewModel.attachController(controller)
+        advanceUntilIdle()
 
         viewModel.onConnectClicked(hasBluetoothPermission = true)
-        assertEquals(repository.devices, viewModel.uiState.value.pairedDevices)
+        assertEquals(controller.devices, viewModel.uiState.value.pairedDevices)
 
-        viewModel.connect(repository.devices.single())
-        advanceUntilIdle()
-        repository.events.emit(ObdEvent.Connected("Test adapter"))
-        repository.events.emit(ObdEvent.SampleReceived(sample(rpm = 820f)))
+        viewModel.connect(controller.devices.single())
+        controller.mutableState.value = ObdSessionState(
+            status = "Recording · Test adapter",
+            statusKind = SessionStatusKind.CONNECTED,
+            sample = sample(rpm = 820f),
+            sessionActive = true,
+            capturePhase = CapturePhase.ARMED,
+        )
         advanceUntilIdle()
 
         val state = viewModel.uiState.value
@@ -59,38 +70,40 @@ class StallAnalyzerViewModelTest {
     }
 
     @Test
-    fun disconnectCancelsRepositorySessionAndClearsReading() = runTest(dispatcher) {
-        val repository = FakeObdRepository()
-        val viewModel = StallAnalyzerViewModel(repository)
-        viewModel.connect(repository.devices.single())
-        advanceUntilIdle()
-        repository.events.emit(ObdEvent.SampleReceived(sample(rpm = 900f)))
+    fun disconnectRequestsServiceStopAndClearsReading() = runTest(dispatcher) {
+        val controller = FakeSessionController()
+        val viewModel = StallAnalyzerViewModel()
+        viewModel.attachController(controller)
+        controller.mutableState.value = ObdSessionState(
+            status = "Recording · Test adapter",
+            statusKind = SessionStatusKind.CONNECTED,
+            sample = sample(rpm = 900f),
+            sessionActive = true,
+            capturePhase = CapturePhase.ARMED,
+        )
         advanceUntilIdle()
 
+        val effect = async { viewModel.effects.first() }
         viewModel.onConnectClicked(hasBluetoothPermission = true)
 
         assertFalse(viewModel.uiState.value.sessionActive)
         assertNull(viewModel.uiState.value.sample)
         assertEquals("Disconnected", viewModel.uiState.value.status)
-        assertTrue(repository.disconnectCalled)
+        assertEquals(UiEffect.StopRecording, effect.await())
     }
 
     private fun sample(rpm: Float) = ObdSample(rpm = rpm, timestampMs = 1_000L)
 
-    private class FakeObdRepository : ObdRepository {
+    private class FakeSessionController : ObdSessionController {
         val devices = listOf(ObdDevice("device-id", "Test adapter"))
-        val events = MutableSharedFlow<ObdEvent>(extraBufferCapacity = 8)
-        var disconnectCalled = false
+        val mutableState = MutableStateFlow(ObdSessionState())
+        override val state: StateFlow<ObdSessionState> = mutableState
 
         override val isAvailable = true
         override val isEnabled = true
 
         override fun pairedDevices(): List<ObdDevice> = devices
-        override fun observe(deviceId: String): Flow<ObdEvent> = events
         override fun diagnosticLog(): String = "diagnostics"
         override fun analysisData(): String = ""
-        override fun disconnect() {
-            disconnectCalled = true
-        }
     }
 }

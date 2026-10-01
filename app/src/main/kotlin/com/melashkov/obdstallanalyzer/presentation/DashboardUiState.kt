@@ -21,6 +21,8 @@ internal data class DashboardUiState(
 internal sealed interface UiEffect {
     data object RequestBluetoothPermissions : UiEffect
     data object OpenBluetoothSettings : UiEffect
+    data class StartRecording(val deviceId: String) : UiEffect
+    data object StopRecording : UiEffect
     data class Share(val text: String) : UiEffect
     data class Copy(val text: String) : UiEffect
 }

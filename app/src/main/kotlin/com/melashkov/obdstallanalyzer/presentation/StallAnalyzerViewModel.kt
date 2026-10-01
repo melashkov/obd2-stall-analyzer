@@ -7,8 +7,10 @@ import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import com.melashkov.obdstallanalyzer.domain.report.AiDiagnosticReport
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
-import com.melashkov.obdstallanalyzer.domain.repository.ObdEvent
-import com.melashkov.obdstallanalyzer.domain.repository.ObdRepository
+import com.melashkov.obdstallanalyzer.domain.session.CapturePhase
+import com.melashkov.obdstallanalyzer.domain.session.ObdSessionController
+import com.melashkov.obdstallanalyzer.domain.session.ObdSessionState
+import com.melashkov.obdstallanalyzer.domain.session.SessionStatusKind
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -21,30 +23,47 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.sin
 
-internal class StallAnalyzerViewModel(
-    private val repository: ObdRepository,
-) : ViewModel() {
+internal class StallAnalyzerViewModel : ViewModel() {
     private val mutableUiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = mutableUiState.asStateFlow()
 
     private val effectChannel = Channel<UiEffect>(Channel.BUFFERED)
     val effects = effectChannel.receiveAsFlow()
 
-    private var sessionJob: Job? = null
+    private var controller: ObdSessionController? = null
+    private var sessionStateJob: Job? = null
     private var demoJob: Job? = null
     private var captureUiUntil = 0L
     private var captureReady = false
 
+    fun attachController(controller: ObdSessionController) {
+        if (this.controller === controller) return
+        sessionStateJob?.cancel()
+        this.controller = controller
+        sessionStateJob = viewModelScope.launch {
+            controller.state.collect(::applySessionState)
+        }
+    }
+
+    fun detachController(controller: ObdSessionController?) {
+        if (this.controller !== controller) return
+        sessionStateJob?.cancel()
+        sessionStateJob = null
+        this.controller = null
+    }
+
     fun onConnectClicked(hasBluetoothPermission: Boolean) {
         if (mutableUiState.value.sessionActive) {
-            disconnect("Disconnected")
+            requestStopRecording("Disconnected")
             return
         }
         stopDemo(clearSample = true)
+        val controller = controller
         when {
-            !repository.isAvailable -> showMessage("Bluetooth is not available on this device.")
+            controller == null -> showMessage("The recorder service is starting. Try again in a moment.")
+            !controller.isAvailable -> showMessage("Bluetooth is not available on this device.")
             !hasBluetoothPermission -> emit(UiEffect.RequestBluetoothPermissions)
-            !repository.isEnabled -> {
+            !controller.isEnabled -> {
                 showMessage("Enable Bluetooth and pair your adapter, then return here.")
                 emit(UiEffect.OpenBluetoothSettings)
             }
@@ -58,7 +77,8 @@ internal class StallAnalyzerViewModel(
     }
 
     fun loadPairedDevices() {
-        runCatching { repository.pairedDevices() }
+        val controller = controller ?: return showMessage("The recorder service is not available.")
+        runCatching { controller.pairedDevices() }
             .onSuccess { devices ->
                 if (devices.isEmpty()) {
                     showMessage(
@@ -78,7 +98,7 @@ internal class StallAnalyzerViewModel(
 
     fun connect(device: ObdDevice) {
         dismissDevicePicker()
-        sessionJob?.cancel()
+        stopDemo(clearSample = true)
         clearCaptureState()
         mutableUiState.update {
             it.copy(
@@ -88,9 +108,7 @@ internal class StallAnalyzerViewModel(
                 sessionActive = true,
             )
         }
-        sessionJob = viewModelScope.launch {
-            repository.observe(device.id).collect(::handleObdEvent)
-        }
+        emit(UiEffect.StartRecording(device.id))
     }
 
     fun toggleDemo() {
@@ -99,12 +117,14 @@ internal class StallAnalyzerViewModel(
             mutableUiState.update { it.copy(status = "Not connected", statusTone = UiTone.MUTED) }
             return
         }
-        disconnect(newStatus = null)
+        if (mutableUiState.value.sessionActive) emit(UiEffect.StopRecording)
         clearCaptureState()
         mutableUiState.update {
             it.copy(
                 status = "Demo data — no ECU connection",
                 statusTone = UiTone.WARNING,
+                sample = null,
+                sessionActive = false,
                 demoRunning = true,
             )
         }
@@ -133,7 +153,9 @@ internal class StallAnalyzerViewModel(
     }
 
     fun showDiagnostics() {
-        mutableUiState.update { it.copy(diagnostics = repository.diagnosticLog()) }
+        mutableUiState.update {
+            it.copy(diagnostics = controller?.diagnosticLog().orEmpty())
+        }
     }
 
     fun dismissDiagnostics() {
@@ -141,12 +163,12 @@ internal class StallAnalyzerViewModel(
     }
 
     fun copyDiagnostics() {
-        val diagnostics = mutableUiState.value.diagnostics ?: repository.diagnosticLog()
+        val diagnostics = mutableUiState.value.diagnostics ?: controller?.diagnosticLog().orEmpty()
         emit(UiEffect.Copy(diagnostics))
     }
 
     fun shareAnalysis() {
-        val data = repository.analysisData()
+        val data = controller?.analysisData().orEmpty()
         if (data.isBlank()) {
             showMessage("Connect to a vehicle and record some data before starting AI analysis.")
         } else {
@@ -158,30 +180,41 @@ internal class StallAnalyzerViewModel(
         mutableUiState.update { it.copy(message = null) }
     }
 
-    private fun handleObdEvent(event: ObdEvent) {
-        when (event) {
-            is ObdEvent.Status -> mutableUiState.update {
-                it.copy(status = event.message, statusTone = UiTone.WARNING)
-            }
-            is ObdEvent.Connected -> mutableUiState.update {
-                it.copy(status = "Recording · ${event.deviceName}", statusTone = UiTone.ACCENT)
-            }
-            is ObdEvent.SampleReceived -> updateSample(event.sample)
-            is ObdEvent.Failed -> {
-                mutableUiState.update {
-                    it.copy(
-                        status = event.message,
-                        statusTone = UiTone.ERROR,
-                        sessionActive = false,
-                        message = "${event.message}\n\nOpen Diagnostics for the command log.",
-                    )
-                }
-            }
-            ObdEvent.Disconnected -> mutableUiState.update {
-                if (it.sessionActive) {
-                    it.copy(status = "Disconnected", statusTone = UiTone.MUTED, sessionActive = false)
-                } else it
-            }
+    private fun applySessionState(session: ObdSessionState) {
+        if (mutableUiState.value.demoRunning) return
+        val capture = when (session.capturePhase) {
+            CapturePhase.WAITING ->
+                "Waiting for engine start · retains 60 s before and 10 s after" to UiTone.MUTED
+            CapturePhase.ARMED ->
+                "ARMED · retaining the previous 60 seconds" to UiTone.ACCENT
+            CapturePhase.CAPTURING ->
+                "CAPTURING · ${session.captureSecondsRemaining} s remaining" to UiTone.WARNING
+            CapturePhase.READY ->
+                "CAPTURE READY · share with ChatGPT / AI" to UiTone.ACCENT
+        }
+        val previous = mutableUiState.value
+        mutableUiState.update {
+            it.copy(
+                status = session.status,
+                statusTone = when (session.statusKind) {
+                    SessionStatusKind.IDLE -> UiTone.MUTED
+                    SessionStatusKind.WORKING -> UiTone.WARNING
+                    SessionStatusKind.CONNECTED -> UiTone.ACCENT
+                    SessionStatusKind.ERROR -> UiTone.ERROR
+                },
+                sample = session.sample,
+                sessionActive = session.sessionActive,
+                captureStatus = capture.first,
+                captureTone = capture.second,
+                message = if (
+                    session.statusKind == SessionStatusKind.ERROR &&
+                    previous.status != session.status
+                ) {
+                    "${session.status}\n\nOpen Diagnostics for the command log."
+                } else {
+                    it.message
+                },
+            )
         }
     }
 
@@ -212,15 +245,13 @@ internal class StallAnalyzerViewModel(
         }
     }
 
-    private fun disconnect(newStatus: String?) {
-        sessionJob?.cancel()
-        sessionJob = null
-        repository.disconnect()
+    private fun requestStopRecording(newStatus: String) {
+        emit(UiEffect.StopRecording)
         clearCaptureState()
         mutableUiState.update {
             it.copy(
-                status = newStatus ?: it.status,
-                statusTone = if (newStatus == null) it.statusTone else UiTone.MUTED,
+                status = newStatus,
+                statusTone = UiTone.MUTED,
                 sample = null,
                 sessionActive = false,
             )
@@ -253,10 +284,6 @@ internal class StallAnalyzerViewModel(
         effectChannel.trySend(effect)
     }
 
-    override fun onCleared() {
-        repository.disconnect()
-    }
-
     private fun demoSample(seconds: Float) = ObdSample(
         rpm = 900.0f + (sin((seconds * 2.0f).toDouble()) * 35.0).toFloat(),
         mapKpa = 42.0f,
@@ -284,11 +311,9 @@ internal class StallAnalyzerViewModel(
         const val DEMO_STALL_SECONDS = 10.0f
     }
 
-    class Factory(
-        private val repository: ObdRepository,
-    ) : ViewModelProvider.Factory {
+    class Factory : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            StallAnalyzerViewModel(repository) as T
+            StallAnalyzerViewModel() as T
     }
 }
