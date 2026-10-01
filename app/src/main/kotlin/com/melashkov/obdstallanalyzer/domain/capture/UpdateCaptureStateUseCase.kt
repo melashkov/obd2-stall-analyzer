@@ -1,7 +1,5 @@
 package com.melashkov.obdstallanalyzer.domain.capture
 
-import com.melashkov.obdstallanalyzer.domain.model.ObdSample
-
 internal data class CaptureState(
     val phase: Phase = Phase.WAITING,
     val secondsRemaining: Long = 0L,
@@ -28,45 +26,49 @@ internal class UpdateCaptureStateUseCase(
 
     private var previousRpm = Float.NaN
     private var engineArmed = false
-    private var stallDetectedAt = 0L
+    private var stallDetectedAtElapsedRealtimeMs = 0L
 
-    operator fun invoke(sample: ObdSample): Result {
+    operator fun invoke(rpm: Float, elapsedRealtimeMs: Long): Result {
         val stallDetected = engineArmed && state.phase != CaptureState.Phase.CAPTURING &&
             !previousRpm.isNaN() &&
             previousRpm >= STALL_PREVIOUS_RPM &&
-            sample.rpm < STALL_RPM
-        if (sample.rpm >= ARMING_RPM) engineArmed = true
+            rpm < STALL_RPM
+        if (rpm >= ARMING_RPM) engineArmed = true
 
         var captureCompleted = false
         state = when {
             stallDetected -> {
-                stallDetectedAt = sample.timestampMs
+                stallDetectedAtElapsedRealtimeMs = elapsedRealtimeMs
                 engineArmed = false
                 CaptureState(
                     phase = CaptureState.Phase.CAPTURING,
-                    secondsRemaining = remainingSeconds(sample.timestampMs),
+                    secondsRemaining = remainingSeconds(elapsedRealtimeMs),
                 )
             }
             state.phase == CaptureState.Phase.CAPTURING &&
-                sample.timestampMs - stallDetectedAt >= postEventWindowMs -> {
+                elapsedRealtimeMs - stallDetectedAtElapsedRealtimeMs >= postEventWindowMs -> {
                 captureCompleted = true
                 CaptureState(CaptureState.Phase.READY)
             }
             state.phase == CaptureState.Phase.CAPTURING -> CaptureState(
                 phase = CaptureState.Phase.CAPTURING,
-                secondsRemaining = remainingSeconds(sample.timestampMs),
+                secondsRemaining = remainingSeconds(elapsedRealtimeMs),
             )
             state.phase == CaptureState.Phase.READY -> state
             engineArmed -> CaptureState(CaptureState.Phase.ARMED)
             else -> CaptureState()
         }
 
-        previousRpm = sample.rpm
+        previousRpm = rpm
         return Result(state, stallDetected, captureCompleted)
     }
 
-    private fun remainingSeconds(nowMs: Long): Long =
-        ((stallDetectedAt + postEventWindowMs - nowMs).coerceAtLeast(0L) + 999L) / 1_000L
+    private fun remainingSeconds(elapsedRealtimeMs: Long): Long {
+        val remainingMs =
+            (stallDetectedAtElapsedRealtimeMs + postEventWindowMs - elapsedRealtimeMs)
+                .coerceAtLeast(0L)
+        return (remainingMs + 999L) / 1_000L
+    }
 
     companion object {
         const val ARMING_RPM = 700.0f

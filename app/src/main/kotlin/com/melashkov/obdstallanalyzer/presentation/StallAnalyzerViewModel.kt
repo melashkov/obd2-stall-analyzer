@@ -1,9 +1,11 @@
 package com.melashkov.obdstallanalyzer.presentation
 
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
+import com.melashkov.obdstallanalyzer.domain.capture.MonotonicClock
 import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
 import com.melashkov.obdstallanalyzer.domain.capture.UpdateCaptureStateUseCase
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
@@ -24,7 +26,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.sin
 
-internal class StallAnalyzerViewModel : ViewModel() {
+internal class StallAnalyzerViewModel(
+    private val clock: MonotonicClock = MonotonicClock { SystemClock.elapsedRealtime() },
+) : ViewModel() {
     private val mutableUiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = mutableUiState.asStateFlow()
 
@@ -128,10 +132,10 @@ internal class StallAnalyzerViewModel : ViewModel() {
             )
         }
         demoJob = viewModelScope.launch {
-            val startedAt = System.currentTimeMillis()
-            val recorder = StallEventRecorder()
+            val startedAt = clock.elapsedRealtimeMs()
+            val recorder = StallEventRecorder(clock)
             while (isActive) {
-                val seconds = (System.currentTimeMillis() - startedAt) / 1000.0f
+                val seconds = (clock.elapsedRealtimeMs() - startedAt) / 1000.0f
                 val sample = when {
                     seconds < DEMO_ENGINE_START_SECONDS -> demoSample(seconds).copy(
                         rpm = 0.0f,

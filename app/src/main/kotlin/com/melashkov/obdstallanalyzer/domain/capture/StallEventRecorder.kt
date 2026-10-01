@@ -4,9 +4,15 @@ import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import java.util.ArrayDeque
 
 internal class StallEventRecorder(
+    private val clock: MonotonicClock,
     private val preEventWindowMs: Long = UpdateCaptureStateUseCase.PRE_EVENT_WINDOW_MS,
     postEventWindowMs: Long = UpdateCaptureStateUseCase.POST_EVENT_WINDOW_MS,
 ) {
+    private data class TimedSample(
+        val sample: ObdSample,
+        val elapsedRealtimeMs: Long,
+    )
+
     data class Update(
         val sample: ObdSample,
         val stallDetected: Boolean,
@@ -14,7 +20,7 @@ internal class StallEventRecorder(
         val captureState: CaptureState,
     )
 
-    private val rollingSamples = ArrayDeque<ObdSample>()
+    private val rollingSamples = ArrayDeque<TimedSample>()
     private var activeCapture: MutableList<ObdSample>? = null
     private var latestCapture: List<ObdSample> = emptyList()
     private val updateCaptureState = UpdateCaptureStateUseCase(postEventWindowMs)
@@ -22,8 +28,9 @@ internal class StallEventRecorder(
     val captureState: CaptureState get() = updateCaptureState.state
 
     fun record(incoming: ObdSample): Update {
-        trimRollingWindow(incoming.timestampMs)
-        val captureUpdate = updateCaptureState(incoming)
+        val elapsedRealtimeMs = clock.elapsedRealtimeMs()
+        trimRollingWindow(elapsedRealtimeMs)
+        val captureUpdate = updateCaptureState(incoming.rpm, elapsedRealtimeMs)
         val sample = if (captureUpdate.stallDetected) {
             incoming.copy(event = STALL_EVENT)
         } else {
@@ -32,7 +39,9 @@ internal class StallEventRecorder(
 
         when {
             captureUpdate.stallDetected -> {
-                activeCapture = rollingSamples.toMutableList().apply { add(sample) }
+                activeCapture = rollingSamples.mapTo(mutableListOf()) { it.sample }.apply {
+                    add(sample)
+                }
                 rollingSamples.clear()
             }
 
@@ -44,7 +53,7 @@ internal class StallEventRecorder(
                 }
             }
 
-            else -> rollingSamples.addLast(sample)
+            else -> rollingSamples.addLast(TimedSample(sample, elapsedRealtimeMs))
         }
 
         return Update(
@@ -58,12 +67,15 @@ internal class StallEventRecorder(
     fun samplesForAnalysis(): List<ObdSample> = when {
         activeCapture != null -> activeCapture!!.toList()
         latestCapture.isNotEmpty() -> latestCapture
-        else -> rollingSamples.toList()
+        else -> rollingSamples.map { it.sample }
     }
 
-    private fun trimRollingWindow(nowMs: Long) {
-        val earliest = nowMs - preEventWindowMs
-        while (rollingSamples.isNotEmpty() && rollingSamples.first.timestampMs < earliest) {
+    private fun trimRollingWindow(elapsedRealtimeMs: Long) {
+        val earliest = elapsedRealtimeMs - preEventWindowMs
+        while (
+            rollingSamples.isNotEmpty() &&
+            rollingSamples.first.elapsedRealtimeMs < earliest
+        ) {
             rollingSamples.removeFirst()
         }
     }

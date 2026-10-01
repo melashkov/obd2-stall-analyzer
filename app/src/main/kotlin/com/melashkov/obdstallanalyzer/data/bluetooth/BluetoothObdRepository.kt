@@ -2,8 +2,10 @@ package com.melashkov.obdstallanalyzer.data.bluetooth
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.os.SystemClock
 import com.melashkov.obdstallanalyzer.data.obd.ObdCsv
 import com.melashkov.obdstallanalyzer.domain.capture.CaptureState
+import com.melashkov.obdstallanalyzer.domain.capture.MonotonicClock
 import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
 import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import com.melashkov.obdstallanalyzer.domain.repository.ObdDevice
@@ -20,6 +22,7 @@ import kotlinx.coroutines.launch
 
 internal class BluetoothObdRepository(
     private val adapter: BluetoothAdapter?,
+    private val clock: MonotonicClock = MonotonicClock { SystemClock.elapsedRealtime() },
 ) : ObdRepository {
     private data class SessionSnapshot(
         val diagnosticLog: String,
@@ -59,7 +62,7 @@ internal class BluetoothObdRepository(
             return@channelFlow
         }
 
-        val recorder = StallEventRecorder()
+        val recorder = StallEventRecorder(clock)
         val client = ElmBluetoothClient(bluetoothAdapter, device)
         activeClient.getAndSet(client)?.close()
         latestSnapshot.set(

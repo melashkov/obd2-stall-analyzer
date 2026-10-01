@@ -196,7 +196,8 @@ internal class ElmBluetoothClient(
                 }
             }
 
-            val sample = currentSample(System.currentTimeMillis())
+            val wallClockTimestampMs = System.currentTimeMillis()
+            val sample = currentSample(wallClockTimestampMs)
             onSample(sample)
             log(
                 String.format(
