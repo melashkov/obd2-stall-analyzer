@@ -1,5 +1,6 @@
 package com.melashkov.obdstallanalyzer
 
+import com.melashkov.obdstallanalyzer.domain.report.AiDiagnosticReport
 import org.junit.Assert.assertTrue
 import org.junit.Test
 

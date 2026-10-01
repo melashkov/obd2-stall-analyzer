@@ -1,4 +1,4 @@
-package com.melashkov.obdstallanalyzer
+package com.melashkov.obdstallanalyzer.data.obd
 
 import java.util.Locale
 

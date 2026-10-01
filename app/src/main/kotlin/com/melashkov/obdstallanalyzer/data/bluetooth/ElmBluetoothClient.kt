@@ -1,4 +1,4 @@
-package com.melashkov.obdstallanalyzer
+package com.melashkov.obdstallanalyzer.data.bluetooth
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
@@ -6,6 +6,8 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.os.SystemClock
 import android.util.Log
+import com.melashkov.obdstallanalyzer.data.obd.ObdProtocol
+import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -31,7 +33,6 @@ internal class ElmBluetoothClient(
 
     private val executor = Executors.newSingleThreadExecutor()
     private val diagnosticLog = ArrayDeque<String>()
-    private val recorder = StallEventRecorder()
     private val supportedPids = linkedSetOf<Int>()
 
     @Volatile
@@ -74,19 +75,7 @@ internal class ElmBluetoothClient(
     }
 
     @Synchronized
-    fun getDiagnosticLog(): String = buildString {
-        diagnosticLog.forEach { append(it).append('\n') }
-        val samples = recorder.samplesForAnalysis()
-        if (samples.isNotEmpty()) {
-            append("\n--- Retained sensor data ---\n")
-            append(ObdCsv.build(samples, recorder.state))
-        }
-    }
-
-    fun getAnalysisData(): String {
-        val samples = recorder.samplesForAnalysis()
-        return if (samples.isEmpty()) "" else ObdCsv.build(samples, recorder.state)
-    }
+    fun getDiagnosticLog(): String = diagnosticLog.joinToString(separator = "\n")
 
     @SuppressLint("MissingPermission")
     private fun connectAndPoll() {
@@ -219,25 +208,18 @@ internal class ElmBluetoothClient(
                 }
             }
 
-            val update = recorder.record(currentSample(System.currentTimeMillis()))
-            if (update.stallDetected) {
-                log("EVENT STALL_DETECTED timestamp_ms=${update.sample.timestampMs} " +
-                    "rpm=${formatOptional(update.sample.rpm)}; retaining 60s before and 10s after")
-            }
-            if (update.captureCompleted) {
-                log("EVENT STALL_CAPTURE_COMPLETE; ready for AI analysis")
-            }
-            listener.onSample(update.sample)
+            val sample = currentSample(System.currentTimeMillis())
+            listener.onSample(sample)
             log(
                 String.format(
                     Locale.US,
                     "DATA rpm=%.0f ecu=%sV adapter=%sV tps=%s map=%skPa stft=%s",
-                    update.sample.rpm,
-                    formatOptional(update.sample.ecuVoltage),
-                    formatOptional(update.sample.adapterVoltage),
-                    formatOptional(update.sample.throttlePercent),
-                    formatOptional(update.sample.mapKpa),
-                    formatOptional(update.sample.shortTermFuelTrim),
+                    sample.rpm,
+                    formatOptional(sample.ecuVoltage),
+                    formatOptional(sample.adapterVoltage),
+                    formatOptional(sample.throttlePercent),
+                    formatOptional(sample.mapKpa),
+                    formatOptional(sample.shortTermFuelTrim),
                 ),
             )
             cycle++

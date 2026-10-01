@@ -1,5 +1,7 @@
-package com.melashkov.obdstallanalyzer
+package com.melashkov.obdstallanalyzer.data.obd
 
+import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
+import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import java.util.Locale
 
 internal object ObdCsv {

@@ -1,4 +1,4 @@
-package com.melashkov.obdstallanalyzer
+package com.melashkov.obdstallanalyzer.domain.model
 
 data class ObdSample(
     val rpm: Float,

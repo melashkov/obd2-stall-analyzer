@@ -1,5 +1,6 @@
 package com.melashkov.obdstallanalyzer
 
+import com.melashkov.obdstallanalyzer.data.obd.ObdProtocol
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

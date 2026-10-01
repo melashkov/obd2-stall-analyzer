@@ -1,4 +1,4 @@
-package com.melashkov.obdstallanalyzer
+package com.melashkov.obdstallanalyzer.domain.report
 
 internal object AiDiagnosticReport {
     fun build(recorderOutput: String): String = """

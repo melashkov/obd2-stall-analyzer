@@ -1,5 +1,8 @@
 package com.melashkov.obdstallanalyzer
 
+import com.melashkov.obdstallanalyzer.data.obd.ObdCsv
+import com.melashkov.obdstallanalyzer.domain.capture.StallEventRecorder
+import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

@@ -1,5 +1,6 @@
-package com.melashkov.obdstallanalyzer
+package com.melashkov.obdstallanalyzer.domain.capture
 
+import com.melashkov.obdstallanalyzer.domain.model.ObdSample
 import java.util.ArrayDeque
 
 internal class StallEventRecorder(
