@@ -110,9 +110,23 @@ internal class StallAnalyzerViewModel(
         }
         demoJob = viewModelScope.launch {
             val startedAt = System.currentTimeMillis()
+            var stallEmitted = false
             while (isActive) {
                 val seconds = (System.currentTimeMillis() - startedAt) / 1000.0f
-                updateSample(demoSample(seconds))
+                val sample = when {
+                    seconds < DEMO_ENGINE_START_SECONDS -> demoSample(seconds).copy(
+                        rpm = 0.0f,
+                        fuelSystemStatus = "Waiting for engine",
+                    )
+                    seconds < DEMO_STALL_SECONDS ->
+                        demoSample(seconds - DEMO_ENGINE_START_SECONDS)
+                    else -> demoSample(seconds - DEMO_ENGINE_START_SECONDS).copy(
+                        rpm = 0.0f,
+                        event = if (stallEmitted) "" else StallEventRecorder.STALL_EVENT,
+                    )
+                }
+                if (sample.event == StallEventRecorder.STALL_EVENT) stallEmitted = true
+                updateSample(sample)
                 delay(350L)
             }
         }
@@ -264,6 +278,11 @@ internal class StallAnalyzerViewModel(
         fuelSystemStatus = "Closed loop",
         timestampMs = System.currentTimeMillis(),
     )
+
+    private companion object {
+        const val DEMO_ENGINE_START_SECONDS = 5.0f
+        const val DEMO_STALL_SECONDS = 10.0f
+    }
 
     class Factory(
         private val repository: ObdRepository,

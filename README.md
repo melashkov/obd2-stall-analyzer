@@ -9,16 +9,16 @@
 OBD Stall Analyzer is a read-only Android app for cars and motorcycles with a compatible OBD-II adapter. It keeps a rolling window of live engine data, detects a stall from the RPM transition, and packages the event as a portable CSV-backed diagnostic report.
 
 <p align="center">
-  <img src="docs/images/engine-waiting.png" alt="OBD Stall Analyzer connected and waiting for the engine to start" width="30%">
+  <img src="docs/images/engine-waiting.png" alt="OBD Stall Analyzer waiting for the engine to start" width="30%">
   &nbsp;
   <img src="docs/images/engine-armed.png" alt="OBD Stall Analyzer armed while the engine is running" width="30%">
   &nbsp;
-  <img src="docs/images/engine-stopped.png" alt="OBD Stall Analyzer after the engine has stopped" width="30%">
+  <img src="docs/images/engine-stopped.png" alt="OBD Stall Analyzer capture ready after the engine has stopped" width="30%">
 </p>
 
 <p align="center">
-  <strong>Connected</strong> &nbsp;•&nbsp; <strong>Armed</strong> &nbsp;•&nbsp; <strong>Engine stopped</strong><br>
-  <em>A live OBD-II session from ignition-on through the capture cycle.</em>
+  <strong>Waiting</strong> &nbsp;•&nbsp; <strong>Armed</strong> &nbsp;•&nbsp; <strong>Capture ready</strong><br>
+  <em>The demo reproduces the dashboard's complete stall-capture cycle.</em>
 </p>
 
 ## Why use it?
