@@ -29,7 +29,6 @@ internal class StallEventRecorder(
     var state: State = State.ROLLING
         private set
 
-    @Synchronized
     fun record(incoming: ObdSample): Update {
         trimRollingWindow(incoming.timestampMs)
         val stallDetected = engineArmed && activeCapture == null &&
@@ -65,7 +64,6 @@ internal class StallEventRecorder(
         return Update(sample, stallDetected, captureCompleted)
     }
 
-    @Synchronized
     fun samplesForAnalysis(): List<ObdSample> = when {
         activeCapture != null -> activeCapture!!.toList()
         latestCapture.isNotEmpty() -> latestCapture

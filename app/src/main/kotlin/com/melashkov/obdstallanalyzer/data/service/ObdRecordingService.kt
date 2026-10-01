@@ -80,7 +80,8 @@ internal class ObdRecordingService : Service(), ObdSessionController {
 
     private fun startRecording(deviceId: String) {
         promoteToForeground("Connecting to OBD adapter…")
-        recordingJob?.cancel()
+        val previousJob = recordingJob
+        previousJob?.cancel()
         repository.disconnect()
         captureUntilMs = 0L
         captureReady = false
@@ -90,6 +91,7 @@ internal class ObdRecordingService : Service(), ObdSessionController {
             sessionActive = true,
         )
         recordingJob = serviceScope.launch {
+            previousJob?.join()
             repository.observe(deviceId).collect(::handleEvent)
         }
     }

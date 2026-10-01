@@ -16,31 +16,23 @@ import java.nio.charset.StandardCharsets
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.Executors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 
 internal class ElmBluetoothClient(
     private val adapter: BluetoothAdapter,
     private val device: BluetoothDevice,
-    private val listener: Listener,
 ) {
-    interface Listener {
-        fun onStatus(message: String)
-        fun onConnected(deviceName: String)
-        fun onSample(sample: ObdSample)
-        fun onError(message: String, error: Throwable)
-        fun onDisconnected()
-    }
-
-    private val executor = Executors.newSingleThreadExecutor()
     private val diagnosticLog = ArrayDeque<String>()
     private val supportedPids = linkedSetOf<Int>()
 
     @Volatile
-    var isRunning = false
-        private set
-
-    @Volatile
     private var socket: BluetoothSocket? = null
+    @Volatile
+    private var closed = false
     private var input: InputStream? = null
     private var output: OutputStream? = null
 
@@ -63,31 +55,25 @@ internal class ElmBluetoothClient(
     private var barometricKpa = Float.NaN
     private var fuelSystemStatus = "Waiting for ECU"
 
-    fun connect() {
-        isRunning = true
-        executor.execute(::connectAndPoll)
-    }
-
-    fun disconnect() {
-        isRunning = false
-        closeSocket()
-        executor.shutdownNow()
-    }
-
-    @Synchronized
-    fun getDiagnosticLog(): String = diagnosticLog.joinToString(separator = "\n")
+    fun diagnosticLog(): String = diagnosticLog.joinToString(separator = "\n")
 
     @SuppressLint("MissingPermission")
-    private fun connectAndPoll() {
-        var connected = false
+    suspend fun run(
+        onStatus: suspend (String) -> Unit,
+        onConnected: suspend (String) -> Unit,
+        onSample: suspend (ObdSample) -> Unit,
+    ) {
+        if (closed) throw CancellationException("Bluetooth session is closed")
         try {
-            listener.onStatus("Opening Bluetooth serial link…")
+            onStatus("Opening Bluetooth serial link…")
             adapter.cancelDiscovery()
             var candidate = device.createRfcommSocketToServiceRecord(SPP_UUID)
             socket = candidate
             try {
                 candidate.connect()
             } catch (_: IOException) {
+                currentCoroutineContext().ensureActive()
+                if (closed) throw CancellationException("Bluetooth session is closed")
                 closeSocket()
                 log("Secure RFCOMM failed; trying insecure SPP")
                 candidate = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
@@ -96,36 +82,29 @@ internal class ElmBluetoothClient(
             }
             input = candidate.inputStream
             output = candidate.outputStream
-            connected = true
 
-            initializeAdapter()
-            listener.onConnected(device.name ?: device.address)
-            pollSensors()
-        } catch (error: Throwable) {
-            if (isRunning) {
-                listener.onError(error.message ?: "Connection failed", error)
-            }
+            initializeAdapter(onStatus)
+            onConnected(device.name ?: device.address)
+            pollSensors(onStatus, onSample)
         } finally {
-            isRunning = false
             closeSocket()
-            if (connected) listener.onDisconnected()
-            executor.shutdownNow()
         }
     }
 
-    private fun initializeAdapter() {
-        listener.onStatus("Resetting adapter…")
+    private suspend fun initializeAdapter(onStatus: suspend (String) -> Unit) {
+        onStatus("Resetting adapter…")
         try {
             transact("ATZ", 5_000)
         } catch (_: IOException) {
+            currentCoroutineContext().ensureActive()
             log("ATZ did not return a prompt; continuing after reset")
-            SystemClock.sleep(800)
+            delay(800)
         }
-        runObdDiscovery()
+        runObdDiscovery(onStatus)
     }
 
-    private fun runObdDiscovery() {
-        listener.onStatus("Discovering the vehicle's OBD-II capabilities…")
+    private suspend fun runObdDiscovery(onStatus: suspend (String) -> Unit) {
+        onStatus("Discovering the vehicle's OBD-II capabilities…")
         log("--- Standard OBD-II discovery ---")
         ObdProtocol.setupCommands.forEach { transact(it, 2_500) }
 
@@ -137,6 +116,7 @@ internal class ElmBluetoothClient(
                     log(String.format(Locale.US, "ADAPTER_VOLTAGE %.2f V", adapterVoltage))
                 }
             } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
                 log("DISCOVERY $command unavailable: ${error.message}")
             }
         }
@@ -147,6 +127,7 @@ internal class ElmBluetoothClient(
                 val basePid = command.substring(2).toInt(16)
                 supportedPids += ObdProtocol.parseSupportedPids(response, basePid)
             } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
                 log("CAPABILITY $command unavailable: ${error.message}")
             }
         }
@@ -162,24 +143,28 @@ internal class ElmBluetoothClient(
         log("--- Read-only generic OBD-II stall analyzer ---")
     }
 
-    private fun pollSensors() {
-        listener.onStatus("Stall analyzer arms when the engine starts")
+    private suspend fun pollSensors(
+        onStatus: suspend (String) -> Unit,
+        onSample: suspend (ObdSample) -> Unit,
+    ) {
+        onStatus("Stall analyzer arms when the engine starts")
         val optionalCore = ObdProtocol.coreRequests.drop(1).filter(::supports)
         val auxiliary = ObdProtocol.auxiliaryRequests.filter(::supports)
         var cycle = 0
         var consecutiveFailures = 0
 
-        while (isRunning) {
+        while (currentCoroutineContext().isActive) {
             try {
                 rpm = ObdProtocol.parseRpm(transact(ObdProtocol.READ_RPM, 2_200))
                 consecutiveFailures = 0
             } catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
                 consecutiveFailures++
                 log("RPM read failure $consecutiveFailures: ${error.message}")
                 if (consecutiveFailures >= 6) {
                     throw IOException("Live data stopped after repeated ECU timeouts", error)
                 }
-                SystemClock.sleep(150)
+                delay(150)
                 continue
             }
 
@@ -187,6 +172,7 @@ internal class ElmBluetoothClient(
                 try {
                     updateValue(command, transact(command, 1_800))
                 } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
                     log("Core PID $command skipped: ${error.message}")
                 }
             }
@@ -195,6 +181,7 @@ internal class ElmBluetoothClient(
                 try {
                     adapterVoltage = ObdProtocol.parseAdapterVoltage(transact("ATRV", 1_800))
                 } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
                     log("Adapter voltage skipped: ${error.message}")
                 }
             }
@@ -204,12 +191,13 @@ internal class ElmBluetoothClient(
                 try {
                     updateValue(command, transact(command, 1_800))
                 } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
                     log("Auxiliary PID $command skipped: ${error.message}")
                 }
             }
 
             val sample = currentSample(System.currentTimeMillis())
-            listener.onSample(sample)
+            onSample(sample)
             log(
                 String.format(
                     Locale.US,
@@ -223,7 +211,7 @@ internal class ElmBluetoothClient(
                 ),
             )
             cycle++
-            SystemClock.sleep(25)
+            delay(25)
         }
     }
 
@@ -288,10 +276,11 @@ internal class ElmBluetoothClient(
         timestampMs = timestampMs,
     )
 
-    private fun transact(command: String, timeoutMs: Long): String {
+    private suspend fun transact(command: String, timeoutMs: Long): String {
         val currentInput = input ?: throw IOException("Bluetooth link is not open")
         val currentOutput = output ?: throw IOException("Bluetooth link is not open")
-        if (!isRunning) throw IOException("Bluetooth link is not open")
+        currentCoroutineContext().ensureActive()
+        if (closed) throw CancellationException("Bluetooth session is closed")
 
         drainInput(currentInput)
         log("TX $command")
@@ -300,10 +289,12 @@ internal class ElmBluetoothClient(
 
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         val response = ByteArrayOutputStream()
-        while (isRunning && SystemClock.elapsedRealtime() < deadline) {
+        while (SystemClock.elapsedRealtime() < deadline) {
+            currentCoroutineContext().ensureActive()
+            if (closed) throw CancellationException("Bluetooth session is closed")
             val available = currentInput.available()
             if (available <= 0) {
-                SystemClock.sleep(8)
+                delay(8)
                 continue
             }
             repeat(available) {
@@ -324,7 +315,6 @@ internal class ElmBluetoothClient(
         while (stream.available() > 0) stream.read()
     }
 
-    @Synchronized
     private fun log(line: String) {
         val entry = String.format(Locale.US, "%tT.%tL  %s", System.currentTimeMillis(), System.currentTimeMillis(), line)
         diagnosticLog.addLast(entry)
@@ -340,6 +330,11 @@ internal class ElmBluetoothClient(
         } catch (_: IOException) {
             // The link is already closing.
         }
+    }
+
+    fun close() {
+        closed = true
+        closeSocket()
     }
 
     private fun formatOptional(value: Float): String =
