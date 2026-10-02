@@ -21,7 +21,13 @@ OBD Stall Analyzer is a read-only Android app for cars and motorcycles with a co
   <em>The demo reproduces the dashboard's complete stall-capture cycle.</em>
 </p>
 
-## Why use it?
+## Why I built it
+
+My Triumph Street Scrambler occasionally stalls, and I wanted to capture what was happening around those moments to help diagnose the issue. None of the apps I tried quite did what I needed, and the one that came closest required a subscription.
+
+I'm an Android developer, so I thought: why not build it myself? That's how OBD Stall Analyzer came about—a way to capture the engine data around a stall and give me something useful to investigate.
+
+## What it does
 
 - **Capture the useful moment.** Retains up to 60 seconds before a detected stall and 10 seconds after it.
 - **See the engine state at a glance.** Monitor RPM, ECU voltage, throttle, manifold pressure, fuel trim, oxygen sensors, temperatures, timing, purge, and fuel-system state when the vehicle supports them.
